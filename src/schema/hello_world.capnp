@@ -3,6 +3,7 @@
 interface HelloWorld {
     struct HelloRequest {
         name @0 :Text;
+        value @1 :Int32;  # ← 整数を送るために追加
     }
 
     struct HelloReply {

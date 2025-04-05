@@ -1,23 +1,52 @@
-#![allow(dead_code)]
-
 use capnp::capability::Promise;
-use capnp_rpc::pry;
+use capnp_rpc::{rpc_twoparty_capnp, twoparty, RpcSystem, pry};
+use tokio::net::UnixListener;
+use tokio_util::compat::{TokioAsyncReadCompatExt, FuturesAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-// hello_world_capnp を使う（main.rsで #[path] で定義済みなので使える）
 use crate::hello_world_capnp::hello_world;
-use capnp::serialize_packed;
 
-pub mod hello_world_server {
-    use super::*;
+pub struct HelloWorldImpl;
 
-    pub fn write_to_stream() -> ::capnp::Result<()> {
-        let mut message = ::capnp::message::Builder::new_default();
+impl hello_world::Server for HelloWorldImpl {
+    fn say_hello(
+        &mut self,
+        params: hello_world::SayHelloParams,
+        mut results: hello_world::SayHelloResults,
+    ) -> Promise<(), capnp::Error> {
+        let request = pry!(pry!(params.get()).get_request());
+        let name = pry!(request.get_name());
+        let value = request.get_value();
 
-        // バージョンが新しければ hello_request::Builder になる
-        let mut hello_world_builder = message.init_root::<hello_world::hello_request::Builder>();
+        println!("[server] name='{:?}', value={}", name, value);
 
-        hello_world_builder.set_name("Hello, World!");
+        let mut reply = results.get().init_reply();
+        let message = format!("Hello {:?}, I got {}", name, value);
+        reply.set_message(&message);
 
-        serialize_packed::write_message(&mut ::std::io::stdout(), &message)
+        Promise::ok(())
+    }
+}
+
+pub async fn run_server(socket_path: &str) -> anyhow::Result<()> {
+    let _ = std::fs::remove_file(socket_path);
+    let listener = UnixListener::bind(socket_path)?;
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let (read_half, write_half) = stream.into_split();
+        let read_half = read_half.compat();
+        let write_half = write_half.compat_write();
+
+        let network = twoparty::VatNetwork::new(
+            read_half,
+            write_half,
+            rpc_twoparty_capnp::Side::Server,
+            Default::default(),
+        );
+
+        let client = capnp_rpc::new_client::<hello_world::Client, _>(HelloWorldImpl).client;
+
+        let rpc_system = RpcSystem::new(Box::new(network), Some(client));
+        tokio::task::spawn_local(rpc_system);
     }
 }
