@@ -9,8 +9,10 @@ use crate::hello_world_capnp::hello_world;
 pub struct HelloWorldImpl;
 
 pub async fn run_client(socket_path: &str) -> anyhow::Result<()> {
-    // Unix ドメインソケットでサーバーに接続
-    let stream = UnixStream::connect(socket_path).await?;
+    // Unix ドメインソケットでサーバーに接続するが, 失敗した場合はエラーを出力する
+    let stream = UnixStream::connect(socket_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect to server: {}", e))?;
 
     // 読み取り / 書き込みのハーフに分ける（所有権の問題を回避するため）
     let (read_half, write_half) = stream.into_split();
