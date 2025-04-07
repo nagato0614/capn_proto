@@ -1,5 +1,5 @@
 use capnp::capability::Promise;
-use capnp_rpc::{rpc_twoparty_capnp, twoparty, RpcSystem, pry};
+use capnp_rpc::{pry, rpc_twoparty_capnp, twoparty, RpcSystem};
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -33,8 +33,7 @@ pub async fn run_client(socket_path: &str) -> anyhow::Result<()> {
     let mut rpc_system = RpcSystem::new(Box::new(network), None);
 
     // サーバーが持っている HelloWorld インターフェースを取得
-    let hello_world: hello_world::Client =
-        rpc_system.bootstrap(rpc_twoparty_capnp::Side::Server);
+    let hello_world: hello_world::Client = rpc_system.bootstrap(rpc_twoparty_capnp::Side::Server);
 
     // RPC システムを非同期で動かす（spawn_local は LocalSet の中でしか使えない）
     tokio::task::spawn_local(rpc_system);
@@ -60,4 +59,41 @@ pub async fn run_client(socket_path: &str) -> anyhow::Result<()> {
     println!("[client] サーバーからの返答: {}", message);
 
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server;
+    use once_cell::sync::Lazy;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+    use tokio::task;
+    use tokio::task::LocalSet;
+
+    static TEMP_DIR: Lazy<TempDir> = Lazy::new(|| {
+        tempfile::tempdir().expect("Failed to create temp dir")
+    });
+
+    static SOCKET_PATH: Lazy<PathBuf> = Lazy::new(|| {
+        TEMP_DIR.path().join("test.sock")
+    });
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_run_client_success() {
+        let local_set = LocalSet::new();
+
+        local_set.run_until(async {
+            let socket_path_str = SOCKET_PATH.to_str().unwrap();
+
+            let server_handle = task::spawn_local(server::run_server(socket_path_str));
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+            let client_result = run_client(socket_path_str).await;
+
+            assert!(client_result.is_ok(), "Client execution failed: {:?}", client_result);
+
+            server_handle.abort();
+        }).await;
+    }
 }
