@@ -58,7 +58,7 @@ pub async fn run_event_subscribe_client(socket_path: &str) -> anyhow::Result<()>
     }
 
     // サーバーからのイベントを受け取る間、しばらく待機（例えば30秒）
-    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
     Ok(())
 }
