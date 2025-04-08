@@ -1,0 +1,45 @@
+@startuml
+autonumber
+
+participant "Client (run_client)" as Client
+participant "Cap'n Proto RPCSystem\n(Client side)" as ClientRPC
+participant "Server (run_server)" as Server
+participant "Cap'n Proto RPCSystem\n(Server side)" as ServerRPC
+participant "HelloWorldImpl\n(Server Logic)" as HelloWorld
+
+== 接続開始 ==
+
+Client -> ClientRPC : bootstrap(Side::Server)\nHelloWorld クライアント取得
+ClientRPC -> ServerRPC : 接続確立 (UnixSocket)
+ServerRPC -> Server : accept() (待機していたソケットが接続)
+
+== RPC リクエスト ==
+
+Client -> ClientRPC : say_hello_request()\nリクエストオブジェクト生成
+Client -> ClientRPC : request.get().init_request()\nname="Toru", value=123
+Client -> ClientRPC : request.send()
+
+ClientRPC -> ServerRPC : RPC 通信 (HelloWorld.sayHello)
+
+ServerRPC -> HelloWorld : say_hello(params, results)
+
+HelloWorld -> HelloWorld : params.get() -> request 取得
+HelloWorld -> HelloWorld : request.get_name() -> "Toru"
+HelloWorld -> HelloWorld : request.get_value() -> 123
+HelloWorld -> HelloWorld : レスポンスメッセージ生成\n"Hello \"Toru\", I got 123"
+
+HelloWorld -> ServerRPC : results.get().init_reply().set_message()
+
+ServerRPC -> ClientRPC : RPC 応答
+
+ClientRPC -> Client : response.get().get_reply().get_message()
+
+Client -> Client : println!("[client] サーバーからの返答: Hello \"Toru\", I got 123")
+
+== 通信終了 ==
+
+Client -> ClientRPC : クライアント処理終了
+ServerRPC -> Server : 次の accept() を待つ
+
+@enduml
+”

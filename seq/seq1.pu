@@ -1,0 +1,54 @@
+@startuml
+autonumber
+
+actor User
+
+participant "Test Executor" as Test
+participant "LocalSet" as LocalSet
+participant "Server" as Server
+participant "UnixSocket" as Socket
+participant "Client" as Client
+participant "RpcSystem (Server)" as RpcSystemS
+participant "RpcSystem (Client)" as RpcSystemC
+participant "HelloWorldImpl" as HelloWorld
+
+== テスト開始 ==
+
+User -> Test: cargo test 起動
+Test -> LocalSet: LocalSet 作成
+LocalSet -> Server: spawn_local(run_server)
+Server -> Socket: UnixSocket バインド（/tmp/test.sock）
+
+== クライアント起動 ==
+
+LocalSet -> Client: run_client()
+Client -> Socket: UnixSocket 接続
+Socket -> Server: accept()
+
+Server -> RpcSystemS: RpcSystem サーバー側起動
+RpcSystemS -> HelloWorld: HelloWorldImpl を登録
+
+Client -> RpcSystemC: RpcSystem クライアント側起動
+RpcSystemC -> RpcSystemS: bootstrap(HelloWorld)
+RpcSystemS -> RpcSystemC: HelloWorld Client オブジェクト返却
+
+== クライアントがリクエスト送信 ==
+
+Client -> RpcSystemC: say_hello_request()
+RpcSystemC -> RpcSystemS: send HelloRequest{name="Toru", value=123}
+RpcSystemS -> HelloWorld: say_hello()
+
+HelloWorld -> HelloWorld: request.get_name() / request.get_value()
+HelloWorld -> RpcSystemS: レスポンス生成 (HelloReply{ message })
+
+RpcSystemS -> RpcSystemC: レスポンス返却
+RpcSystemC -> Client: get_reply() -> get_message()
+
+Client -> Client: println! サーバーからの返答を出力
+
+== テスト終了 ==
+
+LocalSet -> Server: server_handle.abort()
+Test -> User: テスト完了
+
+@enduml
