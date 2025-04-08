@@ -3,14 +3,14 @@ use capnp_rpc::{pry, rpc_twoparty_capnp, twoparty, RpcSystem};
 use tokio::net::UnixListener;
 use tokio::time::{sleep, Duration};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use std::sync::{Arc, Mutex};
 
 use crate::hello_world_capnp::hello_world;
 
 // サーバー側で実装する HelloWorld のロジック
-pub struct HelloWorldImpl;
-
-// サーバーが保持するイベントリスナー（クライアントから渡される）
-static mut EVENT_LISTENER: Option<hello_world::event_listener::Client> = None;
+pub struct HelloWorldImpl {
+    event_listener: Arc<Mutex<Option<hello_world::event_listener::Client>>>,
+}
 
 // Cap’n Proto の RPC サーバー側の処理を実装
 impl hello_world::Server for HelloWorldImpl {
@@ -37,31 +37,35 @@ impl hello_world::Server for HelloWorldImpl {
         params: hello_world::SubscribeEventsParams,
         _results: hello_world::SubscribeEventsResults,
     ) -> Promise<(), capnp::Error> {
-        // クライアントから送られてきた listener を保持
         let listener = pry!(pry!(params.get()).get_listener());
 
-        unsafe {
-            EVENT_LISTENER = Some(listener.clone());
+        {
+            let mut guard = self.event_listener.lock().unwrap();
+            *guard = Some(listener.clone());
         }
 
         println!("[server] イベントリスナー登録完了！");
+
+        let listener_ref = Arc::clone(&self.event_listener);
 
         // 非同期で通知を送るタスクを起動
         tokio::task::spawn_local(async move {
             loop {
                 sleep(Duration::from_secs(5)).await;
 
-                unsafe {
-                    if let Some(ref listener) = EVENT_LISTENER {
-                        let mut request = listener.on_event_request();
-                        request.get().set_message("サーバーからの定期通知です！");
+                let maybe_listener = {
+                    let guard = listener_ref.lock().unwrap();
+                    guard.clone()
+                };
 
-                        // エラーはログに出すがループは継続
-                        if let Err(e) = request.send().promise.await {
-                            eprintln!("[server] イベント送信失敗: {:?}", e);
-                        } else {
-                            println!("[server] イベント送信成功！");
-                        }
+                if let Some(listener) = maybe_listener {
+                    let mut request = listener.on_event_request();
+                    request.get().set_message("サーバーからの定期通知です！");
+
+                    if let Err(e) = request.send().promise.await {
+                        eprintln!("[server] イベント送信失敗: {:?}", e);
+                    } else {
+                        println!("[server] イベント送信成功！");
                     }
                 }
             }
@@ -74,8 +78,9 @@ impl hello_world::Server for HelloWorldImpl {
 // サーバーを起動する関数
 pub async fn run_server(socket_path: &str) -> anyhow::Result<()> {
     let _ = std::fs::remove_file(socket_path);
-
     let listener = UnixListener::bind(socket_path)?;
+
+    let event_listener = Arc::new(Mutex::new(None));
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -90,7 +95,11 @@ pub async fn run_server(socket_path: &str) -> anyhow::Result<()> {
             Default::default(),
         );
 
-        let client = capnp_rpc::new_client::<hello_world::Client, _>(HelloWorldImpl).client;
+        let service_impl = HelloWorldImpl {
+            event_listener: Arc::clone(&event_listener),
+        };
+
+        let client = capnp_rpc::new_client::<hello_world::Client, _>(service_impl).client;
 
         let rpc_system = RpcSystem::new(Box::new(network), Some(client));
 
