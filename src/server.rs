@@ -50,6 +50,8 @@ impl hello_world::Server for HelloWorldImpl {
 
         // 非同期で通知を送るタスクを起動
         tokio::task::spawn_local(async move {
+            let mut failure_count = 0;
+
             loop {
                 sleep(Duration::from_secs(5)).await;
 
@@ -62,11 +64,23 @@ impl hello_world::Server for HelloWorldImpl {
                     let mut request = listener.on_event_request();
                     request.get().set_message("サーバーからの定期通知です！");
 
-                    if let Err(e) = request.send().promise.await {
-                        eprintln!("[server] イベント送信失敗: {:?}", e);
-                    } else {
-                        println!("[server] イベント送信成功！");
+                    match request.send().promise.await {
+                        Ok(_) => {
+                            println!("[server] イベント送信成功！");
+                            failure_count = 0; // 成功したら失敗カウントリセット
+                        }
+                        Err(e) => {
+                            eprintln!("[server] イベント送信失敗: {:?}", e);
+                            failure_count += 1;
+
+                            if failure_count >= 5 {
+                                println!("[server] 連続で 5 回失敗したため、通知を停止します。");
+                                break;
+                            }
+                        }
                     }
+                } else {
+                    println!("[server] リスナーが存在しないため通知をスキップします。");
                 }
             }
         });
